@@ -1,0 +1,72 @@
+# Salvar no repositorio em: .github/workflows/hosts-filtrado.yml
+# Repositorio precisa ser PUBLICO (o adlist do RouterOS busca a URL sem autenticacao).
+name: hosts-filtrado
+
+on:
+  schedule:
+    - cron: '30 6 * * *'   # 03:30 America/Sao_Paulo (UTC-3)
+  workflow_dispatch:
+  push:
+    paths:
+      - whitelist.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hosts-filtrado
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar upstream (StevenBlack unified) e validar
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-delay 5 \
+            https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts \
+            -o upstream.hosts
+          n=$(grep -c '^0\.0\.0\.0 ' upstream.hosts || true)
+          echo "Entradas upstream: $n"
+          # trava de seguranca: nunca publicar a partir de download truncado
+          test "$n" -gt 50000
+
+      - name: Aplicar whitelist (match exato)
+        run: |
+          set -euo pipefail
+          test -s whitelist.txt
+          awk '
+            FILENAME==ARGV[1] { sub(/\r$/,""); if ($0 !~ /^[[:space:]]*(#|$)/) wl[tolower($1)]=1; next }
+            { sub(/\r$/,"") }
+            /^[[:space:]]*(#|$)/ { print; next }
+            (tolower($2) in wl) { removed++; next }
+            { print }
+            END { printf "Removidas: %d\n", removed+0 > "/dev/stderr" }
+          ' whitelist.txt upstream.hosts > hosts-filtrado.tmp
+
+          # pos-check: nenhum dominio da whitelist pode sobrar no resultado
+          awk '
+            FILENAME==ARGV[1] { if ($0 !~ /^[[:space:]]*(#|$)/) wl[tolower($1)]=1; next }
+            (tolower($2) in wl) { bad=1; print "AINDA PRESENTE: " $2 }
+            END { exit bad }
+          ' whitelist.txt hosts-filtrado.tmp
+
+          # pos-check: resultado nao pode ter encolhido demais
+          test "$(grep -c '^0\.0\.0\.0 ' hosts-filtrado.tmp)" -gt 50000
+          mv hosts-filtrado.tmp hosts-filtrado
+
+      - name: Commit se mudou
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add hosts-filtrado
+          if git diff --cached --quiet; then
+            echo "Sem mudancas."
+          else
+            git commit -m "hosts-filtrado $(date -u +%F)"
+            git push
+          fi
