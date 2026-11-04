@@ -1,0 +1,7 @@
+# whitelist do hosts-filtrado
+# Match EXATO (nao remove subdominios). Um dominio por linha.
+# So adicione com evidencia: captura DNS do aparelho cruzada com a lista.
+#
+# LG ThinQ (ar-condicionado e lava e seca) - bloqueados na lista base StevenBlack
+common.iot.aic.lgthinq.com
+aic-common.lgthinq.com
